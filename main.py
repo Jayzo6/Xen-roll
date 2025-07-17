@@ -50,7 +50,7 @@ async def perform_login_with_email(page):
         print("⚠️ Login button not found or already open — continuing.")
 
     # Wait for email field
-    await page.wait_for_selector("input[type='email']", timeout=10000)
+    await page.wait_for_selector("#mat-dialog-0 input", timeout=10000)
     inputs = await page.query_selector_all("input")
     if len(inputs) < 2:
         raise Exception("Login fields not found")
