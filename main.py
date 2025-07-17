@@ -6,21 +6,18 @@ from threading import Thread
 from discord import Intents, Client, Message
 from playwright.async_api import async_playwright
 
-# === Load Environment Safely ===
+# === Load Environment ===
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID_RAW = os.getenv("CHANNEL_ID")
 COOKIE_S = os.getenv("COOKIE_S")
 CF_CLEARANCE = os.getenv("CF_CLEARANCE")
 CF_BM = os.getenv("CF_BM")
 
-# Validate env vars
-if not DISCORD_TOKEN:
-    raise ValueError("DISCORD_TOKEN is not set in environment.")
-if not CHANNEL_ID_RAW:
-    raise ValueError("CHANNEL_ID is not set in environment.")
+if not DISCORD_TOKEN or not CHANNEL_ID_RAW:
+    raise ValueError("DISCORD_TOKEN or CHANNEL_ID missing.")
 CHANNEL_ID = int(CHANNEL_ID_RAW)
 
-# === Flask Keep-Alive ===
+# === Flask server for keep-alive ===
 app = Flask('')
 @app.route('/')
 def home():
@@ -28,10 +25,9 @@ def home():
 
 def run_flask():
     app.run(host='0.0.0.0', port=8080)
-
 Thread(target=run_flask).start()
 
-# === Discord Bot ===
+# === Discord Client ===
 intents = Intents.default()
 intents.message_content = True
 client = Client(intents=intents)
@@ -41,6 +37,24 @@ async def send_discord_message(text):
     if channel:
         await channel.send(text)
 
+# === Login Check Command ===
+async def login_check():
+    async with async_playwright() as p:
+        browser = await p.firefox.launch(headless=True)
+        context = await browser.new_context()
+        await context.add_cookies([
+            {"name": "s", "value": COOKIE_S, "domain": ".csgoroll.com", "path": "/"},
+            {"name": "cf_clearance", "value": CF_CLEARANCE, "domain": ".csgoroll.com", "path": "/"},
+            {"name": "__cf_bm", "value": CF_BM, "domain": ".csgoroll.com", "path": "/"},
+        ])
+        page = await context.new_page()
+        await page.goto("https://www.csgoroll.com/cases/daily-free")
+        await page.wait_for_timeout(3000)
+        content = await page.content()
+        await browser.close()
+        return "Logout" not in content  # True if logged in
+
+# === Time Left Checker ===
 async def get_time_left():
     async with async_playwright() as p:
         browser = await p.firefox.launch(headless=True)
@@ -52,32 +66,27 @@ async def get_time_left():
         ])
         page = await context.new_page()
         await page.goto("https://www.csgoroll.com/cases/daily-free")
-        await page.wait_for_timeout(5000)
-        countdown = await page.query_selector("body > cw-root > main > mat-sidenav-container > mat-sidenav-content > div > cw-box-list-wrapper > cw-daily-free-boxes > section > cw-daily-free > article > cw-free-boxes-grid > section > cw-box-grid-item-gaming:nth-child(2) > div > div.d-flex.flex-column.main-content > button > span.mat-button-wrapper > div > cw-countdown")
-        if countdown:
-            time_left = await countdown.inner_text()
-            await browser.close()
-            return time_left
+        await page.wait_for_timeout(3000)
+        countdown = await page.query_selector("cw-countdown")
+        time_left = await countdown.inner_text() if countdown else None
         await browser.close()
-        return None
+        return time_left
 
-# === Automation Function ===
+# === Daily Claim Automation ===
 async def check_and_claim_daily():
     async with async_playwright() as p:
         browser = await p.firefox.launch(headless=True)
         context = await browser.new_context()
-
         await context.add_cookies([
             {"name": "s", "value": COOKIE_S, "domain": ".csgoroll.com", "path": "/"},
             {"name": "cf_clearance", "value": CF_CLEARANCE, "domain": ".csgoroll.com", "path": "/"},
             {"name": "__cf_bm", "value": CF_BM, "domain": ".csgoroll.com", "path": "/"},
         ])
-
         page = await context.new_page()
         await page.goto("https://www.csgoroll.com/cases/daily-free")
         await page.wait_for_timeout(5000)
 
-        countdown = await page.query_selector("body > cw-root > main > mat-sidenav-container > mat-sidenav-content > div > cw-box-list-wrapper > cw-daily-free-boxes > section > cw-daily-free > article > cw-free-boxes-grid > section > cw-box-grid-item-gaming:nth-child(2) > div > div.d-flex.flex-column.main-content > button > span.mat-button-wrapper > div > cw-countdown")
+        countdown = await page.query_selector("cw-countdown")
         if countdown:
             time_left = await countdown.inner_text()
             await send_discord_message(f"⏳ Dailies not ready. Time left: **{time_left}**")
@@ -85,13 +94,14 @@ async def check_and_claim_daily():
             return "not_ready"
 
         try:
-            await page.get_by_role("button", name="Create Free Daily Battle").click()
+            # Click the button using text filter
+            await page.locator("button", has_text="Create Free Daily Battle").first.click(timeout=10000)
             await page.wait_for_timeout(2000)
             await page.click("#mat-option-18")
             await page.wait_for_timeout(1000)
             await page.click("#mat-option-23")
             await page.wait_for_timeout(1000)
-            await page.click("body > cw-root > main > mat-sidenav-container > mat-sidenav-content > div > cw-pvp-create-unboxing-duel > cw-pvp-create-unboxing-duel-controls > div.d-flex.flex-column.gap-1.ng-star-inserted > div.d-flex.flex-column.flex-sm-row.align-items-sm-center.justify-content-sm-between.gap-1 > div.d-flex.flex-column.flex-md-row.gap-05.gap-md-1.ng-star-inserted > button")
+            await page.click("text=Create battle for free vs bots")
             await page.wait_for_timeout(8000)
 
             await page.wait_for_selector("cw-pvp-unboxing-game-result", timeout=60000)
@@ -106,7 +116,7 @@ async def check_and_claim_daily():
             await browser.close()
             return "error"
 
-# === Loop Task ===
+# === Background Loop ===
 async def loop_task():
     await client.wait_until_ready()
     while not client.is_closed():
@@ -122,7 +132,6 @@ async def on_ready():
 async def on_message(message: Message):
     if message.author == client.user:
         return
-
     content = message.content.lower()
 
     if content == "!checkdailies":
@@ -148,5 +157,16 @@ async def on_message(message: Message):
                 await message.channel.send("✅ Dailies appear to be ready now!")
         except Exception as e:
             await message.channel.send(f"⚠️ Could not fetch time left: {e}")
+
+    elif content == "!logincheck":
+        await message.channel.send("🔐 Checking login status...")
+        try:
+            logged_in = await login_check()
+            if logged_in:
+                await message.channel.send("✅ Successfully logged into your CSGORoll account.")
+            else:
+                await message.channel.send("❌ Not logged in. Your cookies may be invalid or expired.")
+        except Exception as e:
+            await message.channel.send(f"❌ Login check error: {e}")
 
 client.run(DISCORD_TOKEN)
