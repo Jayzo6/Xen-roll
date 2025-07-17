@@ -17,7 +17,7 @@ if not DISCORD_TOKEN or not CHANNEL_ID_RAW or not EMAIL or not PASSWORD:
 
 CHANNEL_ID = int(CHANNEL_ID_RAW)
 
-# === Flask Keep-Alive Server ===
+# === Flask for UptimeRobot keep-alive ===
 app = Flask('')
 @app.route('/')
 def home():
@@ -27,7 +27,7 @@ def run_flask():
     app.run(host='0.0.0.0', port=8080)
 Thread(target=run_flask).start()
 
-# === Discord Client ===
+# === Discord Bot ===
 intents = Intents.default()
 intents.message_content = True
 client = Client(intents=intents)
@@ -37,33 +37,37 @@ async def send_discord_message(text):
     if channel:
         await channel.send(text)
 
-# === Email Login Function ===
+# === Email Login Automation ===
 async def perform_login_with_email(page):
     await page.goto("https://www.csgoroll.com/")
-    await page.wait_for_timeout(2000)
+    await page.wait_for_timeout(3000)  # Let Angular render
 
-    # Open alt login modal
-    await page.click("button.btn-secondary.tw-cw-button")
-    await page.wait_for_selector("input[type='email']", timeout=5000)
+    try:
+        login_button = page.locator("button.btn-secondary.tw-cw-button")
+        await login_button.wait_for(state="visible", timeout=10000)
+        await login_button.click()
+    except Exception:
+        print("⚠️ Login button not found or already open — continuing.")
 
-    # Fill credentials
+    # Wait for email field
+    await page.wait_for_selector("input[type='email']", timeout=10000)
     inputs = await page.query_selector_all("input")
     if len(inputs) < 2:
-        raise Exception("Email/password input fields not found")
+        raise Exception("Login fields not found")
+
     await inputs[0].fill(EMAIL)
     await inputs[1].fill(PASSWORD)
     await page.wait_for_timeout(500)
 
-    # Click the login button
+    # Click login in modal
     await page.click("#mat-dialog-0 button:nth-child(2)")
     await page.wait_for_timeout(5000)
 
-    # Check if login succeeded
-    content = await page.content()
-    if "Logout" not in content:
-        raise Exception("Login failed — check credentials or login flow changes.")
+    # Confirm login
+    if "Logout" not in await page.content():
+        raise Exception("Login failed — check credentials or UI flow")
 
-# === Time Left Checker ===
+# === Get Countdown Time Left ===
 async def get_time_left():
     async with async_playwright() as p:
         browser = await p.firefox.launch(headless=True)
@@ -77,7 +81,7 @@ async def get_time_left():
         await browser.close()
         return time_left
 
-# === Daily Claim Automation ===
+# === Claim Daily Free Battle ===
 async def check_and_claim_daily():
     async with async_playwright() as p:
         browser = await p.firefox.launch(headless=True)
@@ -95,8 +99,12 @@ async def check_and_claim_daily():
             return "not_ready"
 
         try:
-            await page.click("body > cw-root > main > mat-sidenav-container > mat-sidenav-content > div > cw-box-list-wrapper > cw-daily-free-boxes > section > cw-daily-free > article > div > div.flex-grow-0.d-flex.flex-column.flex-sm-row.align-items-sm-center.justify-content-between.gap-05.align-self-md-end.align-self-stretch.ng-star-inserted > button", timeout=10000)
+            # Click the exact known selector
+            selector = "body > cw-root > main > mat-sidenav-container > mat-sidenav-content > div > cw-box-list-wrapper > cw-daily-free-boxes > section > cw-daily-free > article > div > div.flex-grow-0.d-flex.flex-column.flex-sm-row.align-items-sm-center.justify-content-between.gap-05.align-self-md-end.align-self-stretch.ng-star-inserted > button"
+            await page.wait_for_selector(selector, timeout=10000)
+            await page.click(selector)
             await page.wait_for_timeout(2000)
+
             await page.click("#mat-option-18")
             await page.wait_for_timeout(1000)
             await page.click("#mat-option-23")
@@ -116,7 +124,7 @@ async def check_and_claim_daily():
             await browser.close()
             return "error"
 
-# === Background Loop ===
+# === Auto Loop ===
 async def loop_task():
     await client.wait_until_ready()
     while not client.is_closed():
