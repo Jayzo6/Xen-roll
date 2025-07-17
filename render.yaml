@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: csgoroll-daily-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: ./start.sh
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: CHANNEL_ID
+        sync: false
+      - key: COOKIE_S
+        sync: false
+      - key: CF_CLEARANCE
+        sync: false
+      - key: CF_BM
+        sync: false
+    plan: free
