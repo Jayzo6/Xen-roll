@@ -85,7 +85,7 @@ async def check_and_claim_daily():
             return "not_ready"
 
         try:
-            await page.click("body > cw-root > main > mat-sidenav-container > mat-sidenav-content > div > cw-box-list-wrapper > cw-daily-free-boxes > section > cw-daily-free > article > div > div.flex-grow-0.d-flex.flex-column.flex-sm-row.align-items-sm-center.justify-content-between.gap-05.align-self-md-end.align-self-stretch.ng-star-inserted > button")
+            await page.get_by_role("button", name="Create Free Daily Battle").click()
             await page.wait_for_timeout(2000)
             await page.click("#mat-option-18")
             await page.wait_for_timeout(1000)
