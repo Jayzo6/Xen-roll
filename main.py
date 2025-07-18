@@ -13,11 +13,11 @@ EMAIL = os.getenv("EMAIL")
 PASSWORD = os.getenv("PASSWORD")
 
 if not DISCORD_TOKEN or not CHANNEL_ID_RAW or not EMAIL or not PASSWORD:
-    raise ValueError("Missing one or more required environment variables.")
+    raise ValueError("Missing environment variables.")
 
 CHANNEL_ID = int(CHANNEL_ID_RAW)
 
-# === Flask for UptimeRobot keep-alive ===
+# === Flask Server ===
 app = Flask('')
 @app.route('/')
 def home():
@@ -25,6 +25,7 @@ def home():
 
 def run_flask():
     app.run(host='0.0.0.0', port=8080)
+
 Thread(target=run_flask).start()
 
 # === Discord Bot ===
@@ -37,37 +38,31 @@ async def send_discord_message(text):
     if channel:
         await channel.send(text)
 
-# === Email Login Automation ===
+# === Email Login ===
 async def perform_login_with_email(page):
     await page.goto("https://www.csgoroll.com/")
-    await page.wait_for_timeout(3000)  # Let Angular render
+    await page.wait_for_timeout(3000)
 
     try:
+        # Open alt login modal
         login_button = page.locator("button.btn-secondary.tw-cw-button")
         await login_button.wait_for(state="visible", timeout=10000)
         await login_button.click()
     except Exception:
-        print("⚠️ Login button not found or already open — continuing.")
+        print("⚠️ Login button skipped (may already be open)")
 
-    # Wait for email field
-    await page.wait_for_selector("#mat-dialog-0 input", timeout=10000)
-    inputs = await page.query_selector_all("input")
-    if len(inputs) < 2:
-        raise Exception("Login fields not found")
-
-    await inputs[0].fill(EMAIL)
-    await inputs[1].fill(PASSWORD)
-    await page.wait_for_timeout(500)
-
-    # Click login in modal
-    await page.click("#mat-dialog-0 button:nth-child(2)")
+    # Wait for modal inputs
+    await page.wait_for_selector("input[formcontrolname='email']", timeout=10000)
+    await page.fill("input[formcontrolname='email']", EMAIL)
+    await page.fill("input[formcontrolname='password']", PASSWORD)
+    await page.click("button[aria-label='login']")
     await page.wait_for_timeout(5000)
 
-    # Confirm login
+    # Check login success
     if "Logout" not in await page.content():
-        raise Exception("Login failed — check credentials or UI flow")
+        raise Exception("Login failed — account not authenticated.")
 
-# === Get Countdown Time Left ===
+# === Countdown Checker ===
 async def get_time_left():
     async with async_playwright() as p:
         browser = await p.firefox.launch(headless=True)
@@ -81,7 +76,7 @@ async def get_time_left():
         await browser.close()
         return time_left
 
-# === Claim Daily Free Battle ===
+# === Daily Claim Logic ===
 async def check_and_claim_daily():
     async with async_playwright() as p:
         browser = await p.firefox.launch(headless=True)
@@ -99,7 +94,7 @@ async def check_and_claim_daily():
             return "not_ready"
 
         try:
-            # Click the exact known selector
+            # Click battle creation button
             selector = "body > cw-root > main > mat-sidenav-container > mat-sidenav-content > div > cw-box-list-wrapper > cw-daily-free-boxes > section > cw-daily-free > article > div > div.flex-grow-0.d-flex.flex-column.flex-sm-row.align-items-sm-center.justify-content-between.gap-05.align-self-md-end.align-self-stretch.ng-star-inserted > button"
             await page.wait_for_selector(selector, timeout=10000)
             await page.click(selector)
@@ -124,7 +119,7 @@ async def check_and_claim_daily():
             await browser.close()
             return "error"
 
-# === Auto Loop ===
+# === Background Loop ===
 async def loop_task():
     await client.wait_until_ready()
     while not client.is_closed():
@@ -140,6 +135,7 @@ async def on_ready():
 async def on_message(message: Message):
     if message.author == client.user:
         return
+
     content = message.content.lower()
 
     if content == "!checkdailies":
